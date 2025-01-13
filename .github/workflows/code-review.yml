@@ -1,0 +1,14 @@
+name: Code Review
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Code Review
+        uses: step-security/ai-codewise@int # use int for dogfooding

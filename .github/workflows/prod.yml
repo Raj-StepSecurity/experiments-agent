@@ -1,0 +1,100 @@
+name: cfnrelease_to_prod
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions: # added using https://github.com/step-security/secure-workflows
+  contents: read
+  id-token: write # for harden-runner policy
+
+jobs:
+  publish-prod:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          policy: agent-api-prod
+
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          repository: step-security/secure-repo
+          path: secure-repo
+
+      - name: Fetch latest commit SHA for IMAGE_TAG
+        id: latest-commit
+        run: |
+          sha=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/step-security/secure-repo/commits | jq -r '.[0].sha')
+          echo "IMAGE_TAG=${{ github.sha }}$sha" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${{ github.sha }}$sha" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_BETA }} # 277233109775 beta env
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_BETA }}
+          aws-region: us-west-2
+
+      - name: Deploy to AWS CloudFormation
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: agent-api-ecr
+          template: cfn/ecr.yml
+          parameter-overrides: "ResourceName=agentapi"
+          no-fail-on-empty-changeset: "1"
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build, tag, and push image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: agentapi
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          context: ./ # Ensure context is the local file system
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          provenance: false
+          cache-from: type=registry,ref=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:buildcache
+          cache-to: type=registry,ref=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
+
+      - name: Upload CloudFormation Template to S3
+        uses: docker://amazon/aws-cli:2.0.7
+        with:
+          args: s3 cp cfn/resources.yml s3://agent-api-deploy-cfn/resources.yml
+
+      - name: Deploy to AWS CloudFormation
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: agent-api
+          template: https://agent-api-deploy-cfn.s3.amazonaws.com/resources.yml
+          parameter-overrides: >-
+            ResourceName=agentapi,
+            ImageTag=${{ steps.latest-commit.outputs.IMAGE_TAG }},
+            ClientId=Iv1.ad96d1f00234487b,
+            ClientSecret=${{ secrets.CLIENTSECRET }},
+            InstallationId=42215337|42215536|42215615|50820679|50820851|50820908|50820965|50821019|50821082|50821126|55633022|55633050|55633065|55633070|55633078,
+            ReleaseMonitorApplicationId=200280,
+            ReleaseMonitorPrivateKey=${{ secrets.RELEASEMONPRIVATEKEY }},
+            PAT=${{ secrets.PAT }},
+            StepSecurityAppClientId=Iv1.373795ecf4dad680,
+            StepSecurityAppClientSecret=${{ secrets.STEPSECURITYAPPCLIENTSECRET }},
+            Env=prod,
+            HardenRunnerGitHubAppPrivateKey=${{ secrets.HARDENRUNNERGITHUBAPPPRIVATEKEY }},
+            CloudfrontCustomDomain=raw-events.agent.api.stepsecurity.io,
+            CertificateARN=arn:aws:acm:us-east-1:277233109775:certificate/bbc81aa0-88c9-4171-8202-f5f9a73b213c
+          no-fail-on-empty-changeset: "1"

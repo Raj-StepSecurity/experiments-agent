@@ -1,0 +1,119 @@
+name: cfnrelease-to-int
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - int
+
+permissions:
+  contents: read
+
+jobs:
+  publish-int:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          ref: int
+
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          repository: step-security/secure-repo
+          path: secure-repo
+          ref: int
+
+      - name: Fetch latest commit SHA for IMAGE_TAG
+        id: latest-commit
+        run: |
+          sha=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/step-security/secure-repo/commits?sha=int | jq -r '.[0].sha')
+          echo "IMAGE_TAG=${{ github.sha }}$sha" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${{ github.sha }}$sha" >> $GITHUB_OUTPUT
+
+      - run: ls -R
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.19.2
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }} # 477763281534 - int env
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Update go.mod with latest commit of secure-repo int branch
+        run: |
+          cd core/
+          go get github.com/step-security/secure-repo@int
+          go mod tidy
+          cat go.mod
+          cd ..
+          cd outpost/
+          go get github.com/step-security/secure-repo@int
+          go mod tidy
+          cat go.mod
+          cd ..
+          go get github.com/step-security/secure-repo@int
+          go mod tidy
+          cat go.mod
+
+      - name: Deploy to AWS CloudFormation
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: agent-api-ecr
+          template: cfn/ecr.yml
+          parameter-overrides: "ResourceName=agentapi"
+          no-fail-on-empty-changeset: "1"
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build, tag, and push image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: agentapi
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          context: ./ # Ensure context is the local file system
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          provenance: false
+          cache-from: type=registry,ref=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:buildcache
+          cache-to: type=registry,ref=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
+
+      - name: Upload CloudFormation Template to S3
+        uses: docker://amazon/aws-cli:2.0.7
+        with:
+          args: s3 cp cfn/resources.yml s3://agent-api-deploy-cfn-int/resources.yml
+
+      - name: Deploy to AWS CloudFormation
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: agent-api
+          template: https://agent-api-deploy-cfn-int.s3.amazonaws.com/resources.yml
+          parameter-overrides: >-
+            ResourceName=agentapi,
+            ImageTag=${{ steps.latest-commit.outputs.IMAGE_TAG }},
+            InstallationId=23007442|39132043|38504430,
+            ClientId=Iv1.68c130650513586e,
+            ReleaseMonitorApplicationId=199968,
+            ReleaseMonitorPrivateKey=${{ secrets.RELEASEMONPRIVATEKEYINT }},
+            ClientSecret=${{ secrets.CLIENTSECRETINT }},
+            PAT=${{ secrets.PAT }},
+            StepSecurityAppClientId=Iv1.373795ecf4dad680,
+            StepSecurityAppClientSecret=${{ secrets.STEPSECURITYAPPCLIENTSECRET }},
+            Env=int,
+            HardenRunnerGitHubAppPrivateKey=${{ secrets.HARDENRUNNERGITHUBAPPPRIVATEKEYINT }},
+            CloudfrontCustomDomain=raw-events.int.api.stepsecurity.io,
+            CertificateARN=arn:aws:acm:us-east-1:477763281534:certificate/647ed13c-2473-4a70-b128-b0cf980be093
+          no-fail-on-empty-changeset: "1"

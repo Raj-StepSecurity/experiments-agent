@@ -1,0 +1,27 @@
+name: Publish Outpost (INT)
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: outpost
+    steps:
+      - uses: actions/checkout@v3
+      - name: Tracing
+        run: |
+          echo "pwd"
+          pwd
+          echo "ls"
+          ls
+          echo "ls -l"
+          ls
+      - name: Publish to Registry
+        uses: elgohr/Publish-Docker-Github-Action@master
+        with:
+          name: step-security/outpost-int/outpost:latest
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ghcr.io
+          dockerfile: DockerfileOutpost

