@@ -1,4 +1,4 @@
-name: Semgrep
+name: Semgrep1
 on:
   workflow_dispatch: {}
   pull_request: {}
